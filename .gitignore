@@ -1,0 +1,11 @@
+
+# Environment variables and secrets
+.env
+.env.*
+
+# Allow a safe example configuration
+!.env.example
+
+# Dependencies and generated files
+node_modules/
+backup/

@@ -1,0 +1,1149 @@
+// =============================================================================
+// CALFIT - Prisma schema (PostgreSQL) - Phase 1 MVP
+// -----------------------------------------------------------------------------
+// Conventions
+//  - IDs are UUIDs. Money is Decimal(10,2). Dates without a time (check-in day,
+//    fee due date) use @db.Date and are computed in IST (Asia/Kolkata).
+//  - Table names are snake_case plural via @@map. Column names stay camelCase.
+//  - Fields marked "plain id" intentionally have no foreign key, so audit
+//    trails survive user or gym deletion.
+//  - Rules Prisma cannot express (partial unique index, trigram search, CHECK
+//    constraints) live in prisma/extras.sql.
+//  - Phase 2 (stories, DMs, highlights, discovery, billing gateway) is NOT in
+//    here yet; see the note at the bottom.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================== ENUMS ========================================
+
+enum PlatformRole {
+  NONE
+  MODERATOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum AccountPrivacy {
+  PUBLIC
+  PRIVATE
+}
+
+enum GymRole {
+  OWNER
+  TRAINER
+  MEMBER
+}
+
+enum MembershipStatus {
+  INVITED // created by import / trainer invite, user not signed up or not accepted yet
+  PENDING // member asked to join, waiting for owner approval
+  ACTIVE
+  REJECTED
+  REMOVED
+}
+
+enum GymStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum GymSubscriptionStatus {
+  TRIAL
+  ACTIVE
+  GRACE
+  READ_ONLY
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum FeeStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+  WAIVED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  BANK_TRANSFER
+  OTHER
+}
+
+enum CheckInSource {
+  QR
+  MANUAL
+}
+
+enum StreakEventType {
+  INCREMENT
+  REST_DAY_USED
+  RESET
+  RECALCULATED
+}
+
+enum FollowStatus {
+  PENDING
+  ACCEPTED
+}
+
+enum ContentStatus {
+  ACTIVE
+  HIDDEN
+  REMOVED
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ReportTarget {
+  POST
+  COMMENT
+  USER
+}
+
+enum ReportReason {
+  SPAM
+  INAPPROPRIATE
+  HARASSMENT
+  FAKE_ACCOUNT
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  ACTIONED
+  DISMISSED
+}
+
+enum PlanStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum NotificationType {
+  FOLLOW
+  FOLLOW_REQUEST
+  LIKE
+  COMMENT
+  NEW_PLAN
+  FEE_REMINDER
+  BROADCAST
+  BADGE_EARNED
+  JOIN_REQUEST
+  JOIN_APPROVED
+  TRAINER_INVITE
+  TRIAL_ENDING
+}
+
+enum WhatsAppMessageType {
+  FEE_REMINDER_BEFORE
+  FEE_REMINDER_DUE
+  FEE_REMINDER_OVERDUE
+  FEE_RECEIPT
+  BROADCAST
+  OTHER
+}
+
+enum WhatsAppCategory {
+  UTILITY
+  MARKETING
+  AUTHENTICATION
+}
+
+enum WhatsAppMessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum TemplateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ConsentType {
+  TERMS
+  PRIVACY
+  WHATSAPP
+  PARENTAL
+  DISCOVERY
+}
+
+enum DeletionStatus {
+  REQUESTED
+  PROCESSING
+  COMPLETED
+}
+
+enum ImportStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ========================= 1. AUTH & USERS ===================================
+
+model User {
+  id                 String         @id @default(uuid()) @db.Uuid
+  phone              String         @unique // E.164, e.g. +919876543210. NEVER returned by public APIs
+  phoneVerifiedAt    DateTime?
+  // Filled during profile setup, so they are nullable until profileCompletedAt is set
+  username           String?        @unique // store lowercase (see extras.sql CHECK)
+  name               String?
+  avatarUrl          String?
+  bio                String?
+  dateOfBirth        DateTime?      @db.Date
+  profileCompletedAt DateTime?
+  privacy            AccountPrivacy @default(PUBLIC)
+  isDiscoverable     Boolean        @default(false) // opt-in only (Phase 2 discovery)
+  status             UserStatus     @default(ACTIVE)
+  platformRole       PlatformRole   @default(NONE) // moderators / admins of CALFIT itself
+  // denormalised counters, updated in the same transaction as the action
+  followersCount     Int            @default(0)
+  followingCount     Int            @default(0)
+  postsCount         Int            @default(0)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+  deletedAt          DateTime?
+
+  sessions          Session[]
+  deviceTokens      DeviceToken[]
+  consents          ConsentRecord[]
+  parentalConsent   ParentalConsent?
+  deletionRequests  DataDeletionRequest[]
+  gymMemberships    GymMember[]
+  gymsCreated       Gym[]                 @relation("GymCreator")
+  checkIns          CheckIn[]
+  streak            Streak?
+  streakEvents      StreakEvent[]
+  badges            UserBadge[]
+  workoutLogs       WorkoutLog[]
+  posts             Post[]
+  comments          Comment[]
+  likes             Like[]
+  following         Follow[]              @relation("Follower")
+  followers         Follow[]              @relation("Following")
+  blocking          Block[]               @relation("Blocker")
+  blockedBy         Block[]               @relation("Blocked")
+  muting            Mute[]                @relation("Muter")
+  mutedBy           Mute[]                @relation("Muted")
+  reportsFiled      Report[]
+  notifications     Notification[]
+  workoutPlans      WorkoutPlan[]
+  dietPlans         DietPlan[]
+  plansAssigned     PlanAssignment[]
+  broadcasts        Broadcast[]
+
+  @@index([status])
+  @@index([username(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_username_trgm")
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_name_trgm")
+  @@map("users")
+}
+
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String    @unique // store a hash, never the raw token
+  deviceName       String?
+  platform         String? // ios | android
+  ip               String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// Log of OTP sends/verifications (rate limiting, abuse checks). Skip if the OTP provider verifies for you.
+model OtpRequest {
+  id         String    @id @default(uuid()) @db.Uuid
+  phone      String
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  ip         String?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, createdAt])
+  @@map("otp_requests")
+}
+
+model DeviceToken {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  token      String   @unique // FCM token
+  platform   String
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+// DPDP Act: every consent is recorded with version and time, and can be revoked.
+model ConsentRecord {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  type      ConsentType
+  version   String? // privacy policy / terms version
+  gymId     String?     @db.Uuid // used for per-gym WhatsApp consent (plain id)
+  grantedAt DateTime    @default(now())
+  revokedAt DateTime?
+  ip        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("consent_records")
+}
+
+// Required when the user is under 18 (minimum age is 10).
+model ParentalConsent {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @unique @db.Uuid
+  guardianName  String
+  guardianPhone String
+  verifiedAt    DateTime? // set once the guardian confirms (mechanism to be agreed with the legal advisor)
+  createdAt     DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("parental_consents")
+}
+
+model DataDeletionRequest {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String         @db.Uuid
+  status      DeletionStatus @default(REQUESTED)
+  requestedAt DateTime       @default(now())
+  completedAt DateTime?
+  notes       String?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([status])
+  @@map("data_deletion_requests")
+}
+
+// ============================ 2. GYMS ========================================
+
+model Gym {
+  id             String    @id @default(uuid()) @db.Uuid
+  name           String
+  code           String    @unique // short join code, e.g. "GOLD42"
+  description    String?
+  address        String?
+  city           String?
+  state          String?
+  pincode        String?
+  latitude       Float
+  longitude      Float
+  checkInRadiusM Int       @default(150)
+  timezone       String    @default("Asia/Kolkata")
+  qrSecret       String // HMAC secret for the daily QR token. NEVER expose in APIs
+  logoUrl        String?
+  coverUrl       String?
+  timings        Json? // e.g. {"mon":[["06:00","10:00"],["17:00","22:00"]], ...}
+  isVerified     Boolean   @default(false) // decision #5 in the brief: how gyms get verified
+  verifiedAt     DateTime?
+  status         GymStatus @default(ACTIVE)
+  createdById    String    @db.Uuid
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  createdBy          User                  @relation("GymCreator", fields: [createdById], references: [id])
+  photos             GymPhoto[]
+  holidays           GymHoliday[]
+  members            GymMember[]
+  trainerAssignments TrainerAssignment[]
+  plans              MembershipPlan[]
+  memberFees         MemberFee[]
+  payments           FeePayment[]
+  checkIns           CheckIn[]
+  posts              Post[]
+  subscription       GymSubscription?
+  invoices           GymInvoice[]
+  reminderSettings   GymReminderSettings?
+  broadcasts         Broadcast[]
+  messageLogs        WhatsAppMessageLog[]
+  messageUsage       GymMessageUsage[]
+  imports            MemberImport[]
+  workoutPlans       WorkoutPlan[]
+  dietPlans          DietPlan[]
+  planAssignments    PlanAssignment[]
+
+  @@index([city])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "gyms_name_trgm")
+  @@map("gyms")
+}
+
+model GymPhoto {
+  id        String   @id @default(uuid()) @db.Uuid
+  gymId     String   @db.Uuid
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@index([gymId])
+  @@map("gym_photos")
+}
+
+// Owner-declared holidays. A holiday never breaks a streak.
+model GymHoliday {
+  id     String   @id @default(uuid()) @db.Uuid
+  gymId  String   @db.Uuid
+  date   DateTime @db.Date
+  reason String?
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@unique([gymId, date])
+  @@map("gym_holidays")
+}
+
+// One row per (gym, person, role). This single table gives you
+// "one person, many roles, many gyms". A person can be both TRAINER and MEMBER in one gym.
+model GymMember {
+  id                String           @id @default(uuid()) @db.Uuid
+  gymId             String           @db.Uuid
+  userId            String?          @db.Uuid // null while an imported member has not signed up yet
+  role              GymRole
+  status            MembershipStatus @default(PENDING)
+  // Used for imported / invited people. When a user verifies this phone, link userId automatically.
+  invitedPhone      String?
+  invitedName       String?
+  whatsappConsent   Boolean          @default(false)
+  whatsappConsentAt DateTime?
+  joinedAt          DateTime? // start of membership at this gym
+  approvedAt        DateTime?
+  approvedById      String?          @db.Uuid // plain id
+  removedAt         DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  gym               Gym                  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  user              User?                @relation(fields: [userId], references: [id])
+  fees              MemberFee[]
+  payments          FeePayment[]
+  messageLogs       WhatsAppMessageLog[]
+  asTrainer         TrainerAssignment[]  @relation("AssignmentTrainer")
+  asMember          TrainerAssignment[]  @relation("AssignmentMember")
+  planAssignments   PlanAssignment[]
+
+  @@unique([gymId, userId, role])
+  @@unique([gymId, invitedPhone, role])
+  @@index([gymId, role, status])
+  @@index([userId])
+  @@index([invitedPhone])
+  @@map("gym_members")
+}
+
+model TrainerAssignment {
+  id        String   @id @default(uuid()) @db.Uuid
+  gymId     String   @db.Uuid
+  trainerId String   @db.Uuid // GymMember with role TRAINER
+  memberId  String   @db.Uuid // GymMember with role MEMBER
+  createdAt DateTime @default(now())
+
+  gym     Gym       @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  trainer GymMember @relation("AssignmentTrainer", fields: [trainerId], references: [id], onDelete: Cascade)
+  member  GymMember @relation("AssignmentMember", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([trainerId, memberId])
+  @@index([memberId])
+  @@map("trainer_assignments")
+}
+
+// Bulk member import (Excel / CSV), with a result report for the preview screen.
+model MemberImport {
+  id           String       @id @default(uuid()) @db.Uuid
+  gymId        String       @db.Uuid
+  uploadedById String       @db.Uuid // plain id
+  fileName     String
+  status       ImportStatus @default(PROCESSING)
+  totalRows    Int          @default(0)
+  importedRows Int          @default(0)
+  failedRows   Int          @default(0)
+  errors       Json? // [{row: 4, field: "phone", message: "invalid number"}]
+  createdAt    DateTime     @default(now())
+  completedAt  DateTime?
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@index([gymId])
+  @@map("member_imports")
+}
+
+// ============================= 3. FEES =======================================
+
+model MembershipPlan {
+  id           String   @id @default(uuid()) @db.Uuid
+  gymId        String   @db.Uuid
+  name         String // "Monthly", "Quarterly"
+  durationDays Int
+  price        Decimal  @db.Decimal(10, 2)
+  description  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  gym  Gym         @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  fees MemberFee[]
+
+  @@index([gymId, isActive])
+  @@map("membership_plans")
+}
+
+// One row = one fee period for one member (renamed from "member_subscriptions"
+// so it is not confused with the gym's own Rs 499 subscription below).
+model MemberFee {
+  id          String    @id @default(uuid()) @db.Uuid
+  gymId       String    @db.Uuid
+  gymMemberId String    @db.Uuid
+  planId      String?   @db.Uuid
+  periodStart DateTime  @db.Date
+  periodEnd   DateTime  @db.Date
+  dueDate     DateTime  @db.Date
+  amount      Decimal   @db.Decimal(10, 2)
+  amountPaid  Decimal   @default(0) @db.Decimal(10, 2)
+  status      FeeStatus @default(PENDING)
+  paidAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  gym         Gym                  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymMember   GymMember            @relation(fields: [gymMemberId], references: [id], onDelete: Cascade)
+  plan        MembershipPlan?      @relation(fields: [planId], references: [id], onDelete: SetNull)
+  payments    FeePayment[]
+  messageLogs WhatsAppMessageLog[]
+
+  @@index([gymId, status, dueDate]) // owner fee list + daily reminder job
+  @@index([gymMemberId, dueDate])
+  @@index([dueDate, status])
+  @@map("member_fees")
+}
+
+// v1 only RECORDS payments (cash / UPI). In-app collection is Phase 3.
+model FeePayment {
+  id           String        @id @default(uuid()) @db.Uuid
+  gymId        String        @db.Uuid
+  memberFeeId  String        @db.Uuid
+  gymMemberId  String        @db.Uuid
+  amount       Decimal       @db.Decimal(10, 2)
+  method       PaymentMethod
+  paidAt       DateTime      @default(now())
+  receiptNo    String // per-gym running number, e.g. "R-000123"
+  note         String?
+  recordedById String        @db.Uuid // plain id
+  createdAt    DateTime      @default(now())
+
+  gym       Gym       @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  memberFee MemberFee @relation(fields: [memberFeeId], references: [id], onDelete: Cascade)
+  gymMember GymMember @relation(fields: [gymMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([gymId, receiptNo])
+  @@index([gymId, paidAt]) // collected-fees analytics
+  @@index([memberFeeId])
+  @@map("fee_payments")
+}
+
+// Editable WhatsApp reminder schedule, one row per gym.
+model GymReminderSettings {
+  id                     String   @id @default(uuid()) @db.Uuid
+  gymId                  String   @unique @db.Uuid
+  whatsappEnabled        Boolean  @default(true)
+  remindBeforeDays       Int      @default(3)
+  remindOnDueDate        Boolean  @default(true)
+  remindWhenOverdue      Boolean  @default(true)
+  overdueRepeatEveryDays Int      @default(3)
+  maxOverdueReminders    Int      @default(3) // protects WhatsApp cost
+  sendReceipts           Boolean  @default(true)
+  updatedAt              DateTime @updatedAt
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@map("gym_reminder_settings")
+}
+
+// ================== 4. CHECK-IN, STREAKS, BADGES =============================
+
+// APPEND-ONLY. Never delete rows. A bad check-in is "voided", not removed, so a streak can always be rebuilt.
+// One valid check-in per person per day is enforced by a partial unique index (see extras.sql).
+model CheckIn {
+  id          String        @id @default(uuid()) @db.Uuid
+  userId      String        @db.Uuid
+  gymId       String        @db.Uuid
+  checkInDate DateTime      @db.Date // the IST calendar day this check-in counts for
+  checkedInAt DateTime      @default(now())
+  source      CheckInSource @default(QR)
+  latitude    Float?
+  longitude   Float?
+  distanceM   Int? // distance from the gym at scan time
+  markedById  String?       @db.Uuid // owner who marked it manually (source = MANUAL), plain id
+  voidedAt    DateTime?
+  voidReason  String?
+  voidedById  String?       @db.Uuid // plain id
+  createdAt   DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  gym  Gym  @relation(fields: [gymId], references: [id])
+
+  @@index([userId, checkInDate(sort: Desc)])
+  @@index([gymId, checkInDate]) // at-risk members, daily attendance
+  @@index([gymId, checkedInAt]) // peak hours
+  @@map("check_ins")
+}
+
+// Cached current state per person. The source of truth is check_ins, so this can always be rebuilt.
+model Streak {
+  userId            String    @id @db.Uuid
+  currentStreak     Int       @default(0)
+  longestStreak     Int       @default(0)
+  lastCheckInDate   DateTime? @db.Date
+  streakStartDate   DateTime? @db.Date
+  lastRestDayUsedOn DateTime? @db.Date // for the "1 rest day per rolling 7 days" rule
+  totalCheckIns     Int       @default(0)
+  totalWorkouts     Int       @default(0) // profile stat
+  totalVolumeKg     Decimal   @default(0) @db.Decimal(14, 2) // profile stat
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("streaks")
+}
+
+// Audit trail of what the engine did, so the nightly job is idempotent and disputes are easy to explain.
+model StreakEvent {
+  id          String          @id @default(uuid()) @db.Uuid
+  userId      String          @db.Uuid
+  type        StreakEventType
+  eventDate   DateTime        @db.Date
+  streakAfter Int
+  note        String?
+  createdAt   DateTime        @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventDate, type])
+  @@index([userId, eventDate])
+  @@map("streak_events")
+}
+
+model Badge {
+  id              Int         @id @default(autoincrement())
+  code            String      @unique // STREAK_7, STREAK_14, ...
+  name            String
+  description     String?
+  iconUrl         String?
+  streakThreshold Int         @unique // 7, 14, 30, 60, 100, 200, 365 (seed these)
+  users           UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  userId    String   @db.Uuid
+  badgeId   Int
+  awardedAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge @relation(fields: [badgeId], references: [id])
+
+  @@id([userId, badgeId])
+  @@map("user_badges")
+}
+
+// Simple key/value config so rules are NOT hard-coded, e.g.
+// key "streak.rest_day" -> {"windowDays": 7, "allowed": 1}
+model AppConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("app_config")
+}
+
+// Optional lightweight workout log that feeds "total volume lifted" on the profile.
+model WorkoutLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  gymId         String?  @db.Uuid // plain id
+  loggedOn      DateTime @db.Date
+  title         String?
+  durationMin   Int?
+  totalVolumeKg Decimal  @default(0) @db.Decimal(12, 2)
+  exercises     Json? // [{name, sets:[{reps, weightKg}]}]
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, loggedOn(sort: Desc)])
+  @@map("workout_logs")
+}
+
+// ========================== 5. SOCIAL ========================================
+// Feed = posts from people you follow + your gym, ordered by (createdAt, id) with cursor pagination.
+// Blocks, mutes and private accounts are filtered in the query. No fan-out tables needed for the MVP.
+
+model Post {
+  id            String        @id @default(uuid()) @db.Uuid
+  authorId      String        @db.Uuid
+  gymId         String?       @db.Uuid // gym tag shown on the post
+  caption       String?
+  status        ContentStatus @default(ACTIVE)
+  likesCount    Int           @default(0)
+  commentsCount Int           @default(0)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  deletedAt     DateTime?
+
+  author   User        @relation(fields: [authorId], references: [id])
+  gym      Gym?        @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  media    PostMedia[]
+  likes    Like[]
+  comments Comment[]
+
+  @@index([authorId, createdAt(sort: Desc)]) // profile grid
+  @@index([gymId, createdAt(sort: Desc)]) // gym feed
+  @@index([createdAt(sort: Desc)])
+  @@map("posts")
+}
+
+model PostMedia {
+  id               String           @id @default(uuid()) @db.Uuid
+  postId           String           @db.Uuid
+  url              String
+  type             MediaType        @default(IMAGE)
+  width            Int?
+  height           Int?
+  durationSec      Int? // videos (Phase 2)
+  sortOrder        Int              @default(0)
+  moderationStatus ModerationStatus @default(PENDING)
+  moderationLabels Json? // raw labels from the image-check service
+  createdAt        DateTime         @default(now())
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+  @@index([moderationStatus])
+  @@map("post_media")
+}
+
+model Like {
+  userId    String   @db.Uuid
+  postId    String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([userId, postId])
+  @@index([postId, createdAt])
+  @@map("likes")
+}
+
+model Comment {
+  id        String        @id @default(uuid()) @db.Uuid
+  postId    String        @db.Uuid
+  authorId  String        @db.Uuid
+  parentId  String?       @db.Uuid // reply to another comment
+  body      String
+  status    ContentStatus @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  deletedAt DateTime?
+
+  post     Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author   User      @relation(fields: [authorId], references: [id])
+  parent   Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies  Comment[] @relation("CommentReplies")
+
+  @@index([postId, createdAt])
+  @@index([parentId])
+  @@map("comments")
+}
+
+// A row with status PENDING is a follow request to a private account.
+model Follow {
+  followerId  String       @db.Uuid
+  followingId String       @db.Uuid
+  status      FollowStatus @default(ACCEPTED)
+  createdAt   DateTime     @default(now())
+
+  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId, status])
+  @@map("follows")
+}
+
+model Block {
+  blockerId String   @db.Uuid
+  blockedId String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+model Mute {
+  muterId   String   @db.Uuid
+  mutedId   String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  muter User @relation("Muter", fields: [muterId], references: [id], onDelete: Cascade)
+  muted User @relation("Muted", fields: [mutedId], references: [id], onDelete: Cascade)
+
+  @@id([muterId, mutedId])
+  @@map("mutes")
+}
+
+// Moderation queue. targetId points at a post, comment or user depending on targetType.
+model Report {
+  id           String       @id @default(uuid()) @db.Uuid
+  reporterId   String       @db.Uuid
+  targetType   ReportTarget
+  targetId     String       @db.Uuid
+  reason       ReportReason
+  details      String?
+  status       ReportStatus @default(OPEN)
+  reviewedById String?      @db.Uuid // plain id
+  reviewedAt   DateTime?
+  actionTaken  String?
+  createdAt    DateTime     @default(now())
+
+  reporter User @relation(fields: [reporterId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@map("reports")
+}
+
+// ======================== 6. TRAINER PLANS ===================================
+// When a template is sent, the backend CLONES it into a normal (isTemplate = false) plan,
+// so later edits to the template never change what a member already received.
+
+model WorkoutPlan {
+  id               String   @id @default(uuid()) @db.Uuid
+  gymId            String   @db.Uuid
+  createdById      String   @db.Uuid
+  title            String
+  description      String?
+  isTemplate       Boolean  @default(false)
+  sourceTemplateId String?  @db.Uuid // plain id of the template this was cloned from
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  gym         Gym                   @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  createdBy   User                  @relation(fields: [createdById], references: [id])
+  exercises   WorkoutPlanExercise[]
+  assignments PlanAssignment[]
+
+  @@index([gymId, isTemplate])
+  @@index([createdById])
+  @@map("workout_plans")
+}
+
+model WorkoutPlanExercise {
+  id           String  @id @default(uuid()) @db.Uuid
+  planId       String  @db.Uuid
+  dayLabel     String  @default("Day 1")
+  sortOrder    Int     @default(0)
+  exerciseName String
+  sets         Int
+  reps         String // "10" or "8-12"
+  restSeconds  Int?
+  notes        String?
+
+  plan WorkoutPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, dayLabel, sortOrder])
+  @@map("workout_plan_exercises")
+}
+
+model DietPlan {
+  id               String   @id @default(uuid()) @db.Uuid
+  gymId            String   @db.Uuid
+  createdById      String   @db.Uuid
+  title            String
+  description      String?
+  targetCalories   Int?
+  isTemplate       Boolean  @default(false)
+  sourceTemplateId String?  @db.Uuid
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  gym         Gym              @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  createdBy   User             @relation(fields: [createdById], references: [id])
+  meals       DietPlanMeal[]
+  assignments PlanAssignment[]
+
+  @@index([gymId, isTemplate])
+  @@index([createdById])
+  @@map("diet_plans")
+}
+
+model DietPlanMeal {
+  id          String   @id @default(uuid()) @db.Uuid
+  planId      String   @db.Uuid
+  dayLabel    String?
+  sortOrder   Int      @default(0)
+  mealName    String // Breakfast, Lunch...
+  timeOfDay   String?
+  description String
+  calories    Int?
+  proteinG    Decimal? @db.Decimal(6, 1)
+  carbsG      Decimal? @db.Decimal(6, 1)
+  fatG        Decimal? @db.Decimal(6, 1)
+
+  plan DietPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, sortOrder])
+  @@map("diet_plan_meals")
+}
+
+// "Send plan to member". At least one of workoutPlanId / dietPlanId must be set (CHECK in extras.sql).
+model PlanAssignment {
+  id            String     @id @default(uuid()) @db.Uuid
+  gymId         String     @db.Uuid
+  memberId      String     @db.Uuid // GymMember (role MEMBER) who receives it
+  assignedById  String     @db.Uuid // trainer (user)
+  workoutPlanId String?    @db.Uuid
+  dietPlanId    String?    @db.Uuid
+  note          String?
+  startDate     DateTime?  @db.Date
+  endDate       DateTime?  @db.Date
+  status        PlanStatus @default(ACTIVE)
+  sentAt        DateTime   @default(now())
+  viewedAt      DateTime?
+
+  gym         Gym          @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  member      GymMember    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  assignedBy  User         @relation(fields: [assignedById], references: [id])
+  workoutPlan WorkoutPlan? @relation(fields: [workoutPlanId], references: [id], onDelete: SetNull)
+  dietPlan    DietPlan?    @relation(fields: [dietPlanId], references: [id], onDelete: SetNull)
+
+  @@index([memberId, status])
+  @@index([gymId])
+  @@map("plan_assignments")
+}
+
+// ================= 7. NOTIFICATIONS, BROADCAST, WHATSAPP =====================
+
+// In-app notification centre. Push is sent separately through FCM.
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  type      NotificationType
+  title     String
+  body      String?
+  data      Json? // deep-link payload, e.g. {"postId": "..."}
+  gymId     String?          @db.Uuid // plain id
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model Broadcast {
+  id              String    @id @default(uuid()) @db.Uuid
+  gymId           String    @db.Uuid
+  createdById     String    @db.Uuid
+  title           String
+  body            String
+  sendPush        Boolean   @default(true)
+  sendWhatsApp    Boolean   @default(false) // off by default: broadcasts can be billed as MARKETING messages
+  isPinned        Boolean   @default(true) // shown pinned on members' Home
+  pinnedUntil     DateTime?
+  recipientsCount Int       @default(0)
+  sentAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  gym       Gym  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@index([gymId, createdAt(sort: Desc)])
+  @@map("broadcasts")
+}
+
+// Platform-wide Meta-approved templates (shared by all gyms).
+model WhatsAppTemplate {
+  id                 String              @id @default(uuid()) @db.Uuid
+  name               String // template name registered with Meta
+  language           String              @default("en")
+  category           WhatsAppCategory
+  messageType        WhatsAppMessageType
+  body               String // for reference, with {{1}} placeholders
+  status             TemplateStatus      @default(PENDING)
+  providerTemplateId String?
+  createdAt          DateTime            @default(now())
+
+  logs WhatsAppMessageLog[]
+
+  @@unique([name, language])
+  @@map("whatsapp_templates")
+}
+
+// Every WhatsApp message is logged: delivery tracking, cost control, per-gym limits.
+model WhatsAppMessageLog {
+  id                String                @id @default(uuid()) @db.Uuid
+  gymId             String                @db.Uuid
+  gymMemberId       String?               @db.Uuid
+  memberFeeId       String?               @db.Uuid
+  templateId        String?               @db.Uuid
+  toPhone           String
+  type              WhatsAppMessageType
+  category          WhatsAppCategory      @default(UTILITY)
+  status            WhatsAppMessageStatus @default(QUEUED)
+  providerMessageId String?               @unique // matched by the delivery webhook
+  // Prevents duplicate sends if a cron job runs twice, e.g. "fee:<memberFeeId>:BEFORE:2026-11-05"
+  dedupeKey         String?               @unique
+  errorCode         String?
+  errorMessage      String?
+  costInr           Decimal?              @db.Decimal(10, 4)
+  queuedAt          DateTime              @default(now())
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  readAt            DateTime?
+  failedAt          DateTime?
+
+  gym       Gym               @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymMember GymMember?        @relation(fields: [gymMemberId], references: [id], onDelete: SetNull)
+  memberFee MemberFee?        @relation(fields: [memberFeeId], references: [id], onDelete: SetNull)
+  template  WhatsAppTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([gymId, queuedAt(sort: Desc)])
+  @@index([gymMemberId])
+  @@index([status])
+  @@map("whatsapp_message_logs")
+}
+
+// Monthly counter per gym, used to enforce the message limit.
+model GymMessageUsage {
+  id          String   @id @default(uuid()) @db.Uuid
+  gymId       String   @db.Uuid
+  period      String // "2026-11"
+  sentCount   Int      @default(0)
+  failedCount Int      @default(0)
+  updatedAt   DateTime @updatedAt
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@unique([gymId, period])
+  @@map("gym_message_usage")
+}
+
+// ================== 8. OWNER SUBSCRIPTION (TRIAL / RS 499) ===================
+
+// Created together with the gym: status TRIAL, trialEndsAt = trialStartsAt + 2 months.
+// Daily job: TRIAL -> GRACE -> READ_ONLY. Member data and streaks are NEVER deleted.
+model GymSubscription {
+  id                  String                @id @default(uuid()) @db.Uuid
+  gymId               String                @unique @db.Uuid
+  status              GymSubscriptionStatus @default(TRIAL)
+  trialStartsAt       DateTime              @default(now())
+  trialEndsAt         DateTime
+  trialReminderSentAt DateTime?
+  currentPeriodStart  DateTime?
+  currentPeriodEnd    DateTime?
+  graceEndsAt         DateTime?
+  pricePerMonth       Decimal               @default(499) @db.Decimal(10, 2)
+  monthlyMessageLimit Int                   @default(1000) // WhatsApp cap per gym per month
+  cancelledAt         DateTime?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@index([status, trialEndsAt])
+  @@index([status, currentPeriodEnd])
+  @@map("gym_subscriptions")
+}
+
+model GymInvoice {
+  id                String        @id @default(uuid()) @db.Uuid
+  gymId             String        @db.Uuid
+  amount            Decimal       @db.Decimal(10, 2)
+  gstAmount         Decimal       @default(0) @db.Decimal(10, 2)
+  status            InvoiceStatus @default(PENDING)
+  periodStart       DateTime      @db.Date
+  periodEnd         DateTime      @db.Date
+  providerPaymentId String? // Razorpay etc. (billing is Phase 2)
+  paidAt            DateTime?
+  createdAt         DateTime      @default(now())
+
+  gym Gym @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@index([gymId, createdAt(sort: Desc)])
+  @@map("gym_invoices")
+}
+
+// ============================ 9. AUDIT =======================================
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid // plain id
+  gymId      String?  @db.Uuid // plain id
+  action     String // "member.removed", "checkin.voided", "gym.settings.updated"...
+  entityType String?
+  entityId   String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([gymId, createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// Phase 2 (add later, as separate migrations): Story, Highlight, Conversation, Message,
+// trainer chat, discovery settings, subscription payment gateway tables.
