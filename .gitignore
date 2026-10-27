@@ -11,3 +11,9 @@ node_modules/
 backup/
 
 backup/
+
+dist/
+coverage/
+*.log
+
+tsconfig.build.tsbuildinfo
