@@ -17,3 +17,5 @@ coverage/
 *.log
 
 tsconfig.build.tsbuildinfo
+
+src/generated/
