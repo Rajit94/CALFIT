@@ -1,11 +1,21 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiServiceUnavailableResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service.js';
 
+@ApiTags('Health')
 @Controller('health')
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
   @Get()
+  @ApiOperation({ summary: 'Check that the API and database are reachable' })
+  @ApiOkResponse({ description: 'API and database are up' })
+  @ApiServiceUnavailableResponse({ description: 'Database is unreachable' })
   async check() {
     const started = Date.now();
     try {
