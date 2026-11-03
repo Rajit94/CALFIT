@@ -13,6 +13,7 @@ export interface ErrorResponse {
   details?: ErrorDetail[];
   path: string;
   timestamp: string;
+  requestId?: string; // echoes the X-Request-Id header
   debug?: { name: string; stack?: string }; // development only, 5xx only
 }
 
@@ -20,6 +21,7 @@ export interface BuildErrorOptions {
   path: string;
   isDevelopment: boolean;
   now?: Date;
+  requestId?: string | undefined;
 }
 
 const GENERIC_500 = 'Internal server error';
@@ -124,7 +126,7 @@ export function buildErrorResponse(
   exception: unknown,
   options: BuildErrorOptions,
 ): ErrorResponse {
-  const { path, isDevelopment } = options;
+  const { path, isDevelopment, requestId } = options;
   const timestamp = (options.now ?? new Date()).toISOString();
 
   const make = (
@@ -141,6 +143,7 @@ export function buildErrorResponse(
     ...(details && details.length > 0 ? { details } : {}),
     path,
     timestamp,
+    ...(requestId ? { requestId } : {}),
     ...(debug ? { debug } : {}),
   });
 

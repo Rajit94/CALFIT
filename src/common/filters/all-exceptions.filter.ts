@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpAdapterHost } from '@nestjs/core';
 import type { Env } from '../../config/env.schema.js';
 import { buildErrorResponse } from '../errors/error-response.js';
+import { getRequestId } from '../logging/request-context.js';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -30,12 +31,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const method = String(httpAdapter.getRequestMethod(request));
     const isDevelopment = this.config.get('NODE_ENV', { infer: true }) === 'development';
 
-    const body = buildErrorResponse(exception, { path, isDevelopment });
+    const requestId = getRequestId();
+    const body = buildErrorResponse(exception, { path, isDevelopment, requestId });
+    const rid = requestId ? ` rid=${requestId}` : '';
 
     if (body.statusCode >= 500) {
-      this.logger.error(`${method} ${path} -> ${body.statusCode} ${body.code}`, stack);
+      this.logger.error(`${method} ${path} -> ${body.statusCode} ${body.code}${rid}`, stack);
     } else {
-      this.logger.warn(`${method} ${path} -> ${body.statusCode} ${body.code}: ${body.message}`);
+      this.logger.warn(`${method} ${path} -> ${body.statusCode} ${body.code}: ${body.message}${rid}`);
     }
 
     httpAdapter.reply(ctx.getResponse(), body, body.statusCode);

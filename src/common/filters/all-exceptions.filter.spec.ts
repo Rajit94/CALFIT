@@ -1,5 +1,6 @@
 import { Logger, NotFoundException } from '@nestjs/common';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { requestContext } from '../logging/request-context.js';
 import { AllExceptionsFilter } from './all-exceptions.filter.js';
 
 function setup(nodeEnv: string) {
@@ -43,6 +44,15 @@ describe('AllExceptionsFilter', () => {
     expect(status).toBe(500);
     expect(body.message).toBe('Internal server error');
     expect(body.debug).toBeUndefined();
+  });
+
+  it('adds the current request id to the response', () => {
+    const { filter, host, lastCall } = setup('production');
+    requestContext.run({ requestId: 'abcd1234-test' }, () => {
+      filter.catch(new NotFoundException('Nope'), host);
+    });
+    const [, body] = lastCall();
+    expect(body.requestId).toBe('abcd1234-test');
   });
 
   it('includes debug info for unexpected errors in development', () => {

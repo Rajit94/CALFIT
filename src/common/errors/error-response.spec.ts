@@ -136,6 +136,19 @@ describe('buildErrorResponse', () => {
     expect(body.message).toBe('Cannot GET /api/v1/nope');
     expect(JSON.stringify(body)).not.toContain('secret123');
   });
+  it('includes the request id when one is available', () => {
+    const body = buildErrorResponse(new NotFoundException('Nope'), {
+      ...opts,
+      requestId: 'abcd1234-test',
+    });
+    expect(body.requestId).toBe('abcd1234-test');
+  });
+
+  it('omits requestId when none is available', () => {
+    const body = buildErrorResponse(new NotFoundException('Nope'), opts);
+    expect('requestId' in body).toBe(false);
+  });
+
   it('handles a non-Error thrown value', () => {
     const body = buildErrorResponse('boom', opts);
     expect(body.statusCode).toBe(500);
