@@ -160,6 +160,7 @@ export function buildErrorResponse(
     } else if (raw && typeof raw === 'object') {
       const r = raw as Record<string, unknown>;
       if (typeof r.code === 'string') code = r.code;
+      else if (typeof r.errorCode === 'string') code = r.errorCode; // Nest 12 HttpExceptionOptions
       if (Array.isArray(r.details)) details = toDetails(r.details);
       if (Array.isArray(r.message)) {
         const list = toDetails(r.message);

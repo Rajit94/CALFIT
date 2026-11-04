@@ -154,4 +154,20 @@ describe('buildErrorResponse', () => {
     expect(body.statusCode).toBe(500);
     expect(body.code).toBe('INTERNAL_SERVER_ERROR');
   });
-});
+
+  it('reads errorCode from a Nest 12 exception options object', () => {
+    const body = buildErrorResponse(
+      new BadRequestException('OTP has expired', { errorCode: 'OTP_EXPIRED' }),
+      opts,
+    );
+    expect(body.code).toBe('OTP_EXPIRED');
+    expect(body.message).toBe('OTP has expired');
+  });
+
+  it('reads errorCode from an object response', () => {
+    const body = buildErrorResponse(
+      new BadRequestException({ errorCode: 'OTP_INVALID', message: 'Invalid code' }),
+      opts,
+    );
+    expect(body.code).toBe('OTP_INVALID');
+  });});
