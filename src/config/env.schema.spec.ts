@@ -69,6 +69,11 @@ describe('envSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  it('rejects OTP_PROVIDER=console in production', () => {
+    const result = envSchema.safeParse({ ...base, NODE_ENV: 'production', OTP_PROVIDER: 'console' });
+    expect(result.success).toBe(false);
+  });
+
   it('rejects a malformed dev OTP code', () => {
     expect(envSchema.safeParse({ ...base, OTP_DEV_FIXED_CODE: '12345' }).success).toBe(false);
   });

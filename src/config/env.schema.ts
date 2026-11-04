@@ -3,7 +3,7 @@ import { z } from 'zod';
 const intWithDefault = (def: number, min: number, max: number) =>
   z.coerce.number().int().min(min).max(max).default(def);
 
-export const envSchema = z
+const envObjectSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -34,5 +34,13 @@ export const envSchema = z
     message: 'OTP_DEV_FIXED_CODE must not be set when NODE_ENV=production',
     path: ['OTP_DEV_FIXED_CODE'],
   });
+
+export const envSchema = envObjectSchema.refine(
+  (env) => !(env.NODE_ENV === 'production' && env.OTP_PROVIDER === 'console'),
+  {
+    message: 'OTP_PROVIDER=console is for development only; configure a real SMS provider for production',
+    path: ['OTP_PROVIDER'],
+  },
+);
 
 export type Env = z.infer<typeof envSchema>;
