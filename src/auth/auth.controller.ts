@@ -6,6 +6,7 @@ import { AuthService } from './auth.service.js';
 import { ClientInfo } from './client-info.decorator.js';
 import type { ClientDetails } from './client-info.decorator.js';
 import { OtpService } from './otp.service.js';
+import { Public } from './public.decorator.js';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -15,6 +16,7 @@ export class AuthController {
     private readonly auth: AuthService,
   ) {}
 
+  @Public()
   @Post('otp/request')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -56,6 +58,7 @@ export class AuthController {
     return this.otp.requestOtp(body.phone, client.ip);
   }
 
+  @Public()
   @Post('otp/verify')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

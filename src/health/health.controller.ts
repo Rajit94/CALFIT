@@ -5,8 +5,10 @@ import {
   ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Public } from '../auth/public.decorator.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
+@Public()
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
