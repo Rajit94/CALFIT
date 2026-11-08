@@ -7,9 +7,12 @@ import { AuthMeController } from './auth-me.controller.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
+import { LogoutService } from './logout.service.js';
 import { MeService } from './me.service.js';
 import { ConsoleOtpSender, OtpSender } from './otp-sender.js';
 import { OtpService } from './otp.service.js';
+import { RefreshService } from './refresh.service.js';
+import { SessionController } from './session.controller.js';
 
 @Module({
   imports: [
@@ -22,10 +25,12 @@ import { OtpService } from './otp.service.js';
       }),
     }),
   ],
-  controllers: [AuthController, AuthMeController],
+  controllers: [AuthController, AuthMeController, SessionController],
   providers: [
     AuthService,
     MeService,
+    RefreshService,
+    LogoutService,
     OtpService,
     { provide: OtpSender, useClass: ConsoleOtpSender },
     // Protects every route unless it is marked @Public().

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { AppController } from '../app.controller.js';
 import { HealthController } from '../health/health.controller.js';
 import { AuthMeController } from './auth-me.controller.js';
+import { SessionController } from './session.controller.js';
 import { AuthController } from './auth.controller.js';
 import { AuthModule } from './auth.module.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
@@ -22,6 +23,16 @@ describe('public routes', () => {
   it('keeps the health check and the root route public', () => {
     expect(isPublic(HealthController)).toBe(true);
     expect(isPublic(AppController)).toBe(true);
+  });
+
+  it('keeps refresh and logout public, because they are used when the access token has expired', () => {
+    expect(isPublic(SessionController.prototype.refresh)).toBe(true);
+    expect(isPublic(SessionController.prototype.logout)).toBe(true);
+  });
+
+  it('keeps logout-all protected', () => {
+    expect(isPublic(SessionController.prototype.logoutAll)).toBe(false);
+    expect(isPublic(SessionController)).toBe(false);
   });
 
   it('keeps /auth/me protected', () => {
