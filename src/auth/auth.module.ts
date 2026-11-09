@@ -6,6 +6,7 @@ import type { Env } from '../config/env.schema.js';
 import { AuthMeController } from './auth-me.controller.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { GymMemberLinkService } from './gym-member-link.service.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { LogoutService } from './logout.service.js';
 import { MeService } from './me.service.js';
@@ -31,6 +32,7 @@ import { SessionController } from './session.controller.js';
     MeService,
     RefreshService,
     LogoutService,
+    GymMemberLinkService,
     OtpService,
     { provide: OtpSender, useClass: ConsoleOtpSender },
     // Protects every route unless it is marked @Public().

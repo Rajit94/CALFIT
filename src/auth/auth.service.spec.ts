@@ -1,4 +1,4 @@
-import { HttpException } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthService } from './auth.service.js';
@@ -85,8 +85,20 @@ function setup(existing?: Partial<UserRow>, otpError?: Error) {
   const values: Record<string, unknown> = { JWT_ACCESS_TTL_SECONDS: 900, REFRESH_TTL_DAYS: 30 };
   const config = { get: (key: string) => values[key] };
   const jwt = new JwtService({ secret: SECRET, signOptions: { algorithm: 'HS256' } });
-  const service = new AuthService(prisma as never, config as never, otp as never, jwt);
-  return { service, users, consents, sessions, otp, jwt };
+  const links = {
+    linkByPhone: vi.fn(async (_userId: string, _phone: string, _ip?: string) => ({
+      linked: [],
+      conflicts: [],
+    })),
+  };
+  const service = new AuthService(
+    prisma as never,
+    config as never,
+    otp as never,
+    jwt,
+    links as never,
+  );
+  return { service, users, consents, sessions, otp, jwt, links };
 }
 
 const codeOf = (e: unknown): string | undefined =>
@@ -119,6 +131,47 @@ describe('AuthService.verifyOtpAndSignIn', () => {
     expect(payload.sub).toBe(users[0]?.id);
     expect(payload.sid).toBe('sess1');
     expect(payload.exp - payload.iat).toBe(900);
+  });
+
+  it('links invited memberships for the verified phone after signing in a new user', async () => {
+    const { service, links, users } = setup();
+    await service.verifyOtpAndSignIn({ phone: PHONE, code: '123456' }, client);
+    expect(links.linkByPhone).toHaveBeenCalledTimes(1);
+    expect(links.linkByPhone).toHaveBeenCalledWith(users[0]?.id, PHONE, '1.2.3.4');
+  });
+
+  it('also links for an existing user, because invitations can arrive after sign-up', async () => {
+    const { service, links } = setup({});
+    await service.verifyOtpAndSignIn({ phone: PHONE, code: '123456' }, client);
+    expect(links.linkByPhone).toHaveBeenCalledWith('user0', PHONE, '1.2.3.4');
+  });
+
+  it('still signs the user in when linking fails, and logs only the masked phone', async () => {
+    const { service, links, sessions } = setup();
+    links.linkByPhone.mockRejectedValueOnce(new Error('db down'));
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    const result = await service.verifyOtpAndSignIn({ phone: PHONE, code: '123456' }, client);
+
+    expect(result.accessToken).toBeTruthy();
+    expect(result.refreshToken).toBeTruthy();
+    expect(sessions).toHaveLength(1);
+    const message = String(logged.mock.calls[0]?.[0]);
+    expect(message).toContain('+91******3210');
+    expect(message).not.toContain(PHONE);
+    logged.mockRestore();
+  });
+
+  it('does not link for a suspended account', async () => {
+    const { service, links } = setup({ status: 'SUSPENDED' });
+    await service.verifyOtpAndSignIn({ phone: PHONE, code: '123456' }, client).catch(() => undefined);
+    expect(links.linkByPhone).not.toHaveBeenCalled();
+  });
+
+  it('does not link when the OTP check fails', async () => {
+    const { service, links } = setup(undefined, new Error('bad code'));
+    await service.verifyOtpAndSignIn({ phone: PHONE, code: '123456' }, client).catch(() => undefined);
+    expect(links.linkByPhone).not.toHaveBeenCalled();
   });
 
   it('signs in an existing user without creating a user or consent records', async () => {

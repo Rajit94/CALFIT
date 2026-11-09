@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { Env } from '../config/env.schema.js';
@@ -6,8 +6,10 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { readNumber } from './auth-config.js';
 import { TERMS_VERSION } from './auth.constants.js';
 import type { ClientDetails } from './client-info.decorator.js';
+import { GymMemberLinkService } from './gym-member-link.service.js';
 import { OtpService } from './otp.service.js';
 import { generateRefreshToken, hashRefreshToken } from './token.crypto.js';
+import { maskPhone } from './validation.js';
 
 export interface VerifyOtpInput {
   phone: string;
@@ -48,6 +50,7 @@ function assertCanSignIn(status: string): void {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private readonly accessTtlSeconds: number;
   private readonly refreshTtlDays: number;
 
@@ -56,9 +59,27 @@ export class AuthService {
     config: ConfigService<Env, true>,
     private readonly otp: OtpService,
     private readonly jwt: JwtService,
+    private readonly memberLinks: GymMemberLinkService,
   ) {
     this.accessTtlSeconds = readNumber(config, 'JWT_ACCESS_TTL_SECONDS');
     this.refreshTtlDays = readNumber(config, 'REFRESH_TTL_DAYS');
+  }
+
+  // Never throws: linking is best effort and must not block sign-in. Anything that fails is
+  // retried automatically at the next sign-in, because unlinked rows stay unlinked.
+  private async linkInvitedMemberships(
+    userId: string,
+    phone: string,
+    ip: string | undefined,
+  ): Promise<void> {
+    try {
+      await this.memberLinks.linkByPhone(userId, phone, ip);
+    } catch (error) {
+      this.logger.error(
+        `Could not link invited memberships for ${maskPhone(phone)}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   // Registration and login are the same flow: a valid OTP signs you in,
@@ -104,6 +125,10 @@ export class AuthService {
 
       return { user, session, isNewUser };
     });
+
+    // Best effort: connect memberships that were created for this phone number in advance.
+    // It runs on every sign-in (not only the first) and never throws, so it cannot block sign-in.
+    await this.linkInvitedMemberships(user.id, phone, client.ip);
 
     const accessToken = await this.jwt.signAsync(
       { sub: user.id, sid: session.id },
