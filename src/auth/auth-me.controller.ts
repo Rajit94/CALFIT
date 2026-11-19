@@ -32,6 +32,20 @@ export class AuthMeController {
         bio: { type: 'string', nullable: true },
         privacy: { type: 'string', enum: ['PUBLIC', 'PRIVATE'] },
         profileCompleted: { type: 'boolean' },
+        dateOfBirth: { type: 'string', format: 'date', nullable: true },
+        ageGroup: { type: 'string', enum: ['MINOR', 'ADULT'], nullable: true },
+        profileNextStep: {
+          type: 'string',
+          enum: ['PROFILE_DETAILS', 'GUARDIAN_CONSENT', 'GUARDIAN_VERIFICATION', 'DONE'],
+        },
+        guardianConsent: {
+          type: 'object',
+          properties: {
+            required: { type: 'boolean' },
+            status: { type: 'string', enum: ['NOT_REQUIRED', 'NOT_STARTED', 'PENDING', 'VERIFIED'] },
+            guardianPhoneMasked: { type: 'string', nullable: true },
+          },
+        },
         createdAt: { type: 'string', format: 'date-time' },
         gyms: {
           type: 'array',

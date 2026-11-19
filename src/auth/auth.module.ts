@@ -9,6 +9,7 @@ import { AuthService } from './auth.service.js';
 import { GymMemberLinkService } from './gym-member-link.service.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 import { LogoutService } from './logout.service.js';
+import { ParentalConsentPolicy } from '../common/profile/parental-consent.policy.js';
 import { MeService } from './me.service.js';
 import { ConsoleOtpSender, OtpSender } from './otp-sender.js';
 import { OtpService } from './otp.service.js';
@@ -27,12 +28,15 @@ import { SessionController } from './session.controller.js';
     }),
   ],
   controllers: [AuthController, AuthMeController, SessionController],
+  // Used by the users module: guardian codes and the consent rules.
+  exports: [OtpService, ParentalConsentPolicy],
   providers: [
     AuthService,
     MeService,
     RefreshService,
     LogoutService,
     GymMemberLinkService,
+    ParentalConsentPolicy,
     OtpService,
     { provide: OtpSender, useClass: ConsoleOtpSender },
     // Protects every route unless it is marked @Public().

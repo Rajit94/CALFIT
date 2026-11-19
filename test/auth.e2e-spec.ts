@@ -182,7 +182,7 @@ describe('sign-in and /auth/me', () => {
     expect(profile.json.phone).toBe(phone);
     expect(profile.json.gyms).toEqual([]);
     expect(Object.keys(profile.json).sort()).toEqual(
-      ['avatarUrl', 'bio', 'createdAt', 'gyms', 'id', 'name', 'phone', 'privacy', 'profileCompleted', 'username'].sort(),
+      ['ageGroup', 'avatarUrl', 'bio', 'createdAt', 'dateOfBirth', 'guardianConsent', 'gyms', 'id', 'name', 'phone', 'privacy', 'profileCompleted', 'profileNextStep', 'username'].sort(),
     );
 
     const consents = await prisma.consentRecord.findMany({ where: { user: { phone } } });

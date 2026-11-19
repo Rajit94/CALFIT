@@ -1,22 +1,27 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { ParentalConsentPolicy } from '../common/profile/parental-consent.policy.js';
+import { buildProfileStatus } from '../common/profile/profile-status.js';
+import type { ProfileStatus } from '../common/profile/profile-status.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 
-export interface MeResult {
+export interface MeResult extends ProfileStatus {
   id: string;
-  phone: string; // the user's OWN number; never exposed on public profiles
+  phone: string;
   username: string | null;
   name: string | null;
   avatarUrl: string | null;
   bio: string | null;
   privacy: string;
-  profileCompleted: boolean;
   createdAt: string;
   gyms: Array<{ gymId: string; gymName: string; role: string; status: string }>;
 }
 
 @Injectable()
 export class MeService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly policy: ParentalConsentPolicy,
+  ) {}
 
   async getMe(userId: string): Promise<MeResult> {
     const user = await this.prisma.user.findUnique({
@@ -29,10 +34,11 @@ export class MeService {
         avatarUrl: true,
         bio: true,
         privacy: true,
+        dateOfBirth: true,
         profileCompletedAt: true,
         createdAt: true,
+        parentalConsent: { select: { guardianPhone: true, verifiedAt: true } },
         gymMemberships: {
-          // REJECTED and REMOVED memberships are hidden from the app.
           where: { status: { in: ['INVITED', 'PENDING', 'ACTIVE'] } },
           orderBy: { createdAt: 'asc' },
           select: { gymId: true, role: true, status: true, gym: { select: { name: true } } },
@@ -47,6 +53,17 @@ export class MeService {
       });
     }
 
+    const policy = await this.policy.get();
+    const status = buildProfileStatus(
+      {
+        dateOfBirth: user.dateOfBirth,
+        profileCompletedAt: user.profileCompletedAt,
+        parentalConsent: user.parentalConsent,
+      },
+      policy,
+      new Date(),
+    );
+
     return {
       id: user.id,
       phone: user.phone,
@@ -55,7 +72,6 @@ export class MeService {
       avatarUrl: user.avatarUrl,
       bio: user.bio,
       privacy: user.privacy,
-      profileCompleted: user.profileCompletedAt !== null,
       createdAt: user.createdAt.toISOString(),
       gyms: user.gymMemberships.map((m) => ({
         gymId: m.gymId,
@@ -63,6 +79,7 @@ export class MeService {
         role: m.role,
         status: m.status,
       })),
+      ...status,
     };
   }
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ParentalConsentPolicy } from '../common/profile/parental-consent.policy.js';
 import { MeService } from './me.service.js';
 
 const row = {
@@ -9,7 +10,9 @@ const row = {
   avatarUrl: null,
   bio: null,
   privacy: 'PUBLIC',
+  dateOfBirth: new Date('1995-05-20T00:00:00.000Z') as Date | null,
   profileCompletedAt: new Date('2026-11-01T00:00:00.000Z') as Date | null,
+  parentalConsent: null,
   createdAt: new Date('2026-10-30T00:00:00.000Z'),
   gymMemberships: [
     { gymId: 'gym-1', role: 'MEMBER', status: 'ACTIVE', gym: { name: "Gold's Gym" } },
@@ -19,8 +22,14 @@ const row = {
 
 function setup(result: typeof row | null) {
   const findUnique = vi.fn(async (_args: unknown) => result);
-  const service = new MeService({ user: { findUnique } } as never);
-  return { service, findUnique };
+  const appConfigFindUnique = vi.fn(async () => null);
+  const prisma = {
+    user: { findUnique },
+    appConfig: { findUnique: appConfigFindUnique },
+  };
+  const policy = new ParentalConsentPolicy(prisma as never);
+  const service = new MeService(prisma as never, policy);
+  return { service, findUnique, appConfigFindUnique };
 }
 
 describe('MeService.getMe', () => {
@@ -30,6 +39,10 @@ describe('MeService.getMe', () => {
     expect(me.id).toBe('user-1');
     expect(me.username).toBe('rajit');
     expect(me.profileCompleted).toBe(true);
+    expect(me.dateOfBirth).toBe('1995-05-20');
+    expect(me.ageGroup).toBe('ADULT');
+    expect(me.profileNextStep).toBe('DONE');
+    expect(me.guardianConsent.status).toBe('NOT_REQUIRED');
     expect(me.createdAt).toBe('2026-10-30T00:00:00.000Z');
     expect(me.gyms).toEqual([
       { gymId: 'gym-1', gymName: "Gold's Gym", role: 'MEMBER', status: 'ACTIVE' },
@@ -38,8 +51,15 @@ describe('MeService.getMe', () => {
   });
 
   it('reports profileCompleted=false when profile setup has not finished', async () => {
-    const { service } = setup({ ...row, profileCompletedAt: null });
-    expect((await service.getMe('user-1')).profileCompleted).toBe(false);
+    const { service } = setup({
+      ...row,
+      dateOfBirth: null,
+      profileCompletedAt: null,
+    });
+    const me = await service.getMe('user-1');
+    expect(me.profileCompleted).toBe(false);
+    expect(me.profileNextStep).toBe('PROFILE_DETAILS');
+    expect(me.dateOfBirth).toBeNull();
   });
 
   it('returns only the public-safe field set', async () => {
@@ -48,14 +68,18 @@ describe('MeService.getMe', () => {
     expect(Object.keys(me).sort()).toEqual(
       [
         'avatarUrl',
+        'ageGroup',
         'bio',
         'createdAt',
+        'dateOfBirth',
+        'guardianConsent',
         'gyms',
         'id',
         'name',
         'phone',
         'privacy',
         'profileCompleted',
+        'profileNextStep',
         'username',
       ].sort(),
     );

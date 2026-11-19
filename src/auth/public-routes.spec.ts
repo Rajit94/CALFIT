@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { AppController } from '../app.controller.js';
 import { HealthController } from '../health/health.controller.js';
 import { AuthMeController } from './auth-me.controller.js';
+import { UsersController } from '../users/users.controller.js';
 import { SessionController } from './session.controller.js';
 import { AuthController } from './auth.controller.js';
 import { AuthModule } from './auth.module.js';
@@ -38,6 +39,13 @@ describe('public routes', () => {
   it('keeps /auth/me protected', () => {
     expect(isPublic(AuthMeController)).toBe(false);
     expect(isPublic(AuthMeController.prototype.getMe)).toBe(false);
+  });
+
+  it('keeps every profile route protected', () => {
+    expect(isPublic(UsersController)).toBe(false);
+    for (const name of ['usernameAvailable', 'setupProfile', 'updateProfile', 'requestGuardian', 'verifyGuardian'] as const) {
+      expect(isPublic(UsersController.prototype[name])).toBe(false);
+    }
   });
 
   it('registers JwtAuthGuard globally from AuthModule', () => {
