@@ -73,7 +73,9 @@ export class OtpService {
       orderBy: { createdAt: 'desc' },
       select: { createdAt: true },
     });
-    if (latest) {
+    // A cooldown of 0 means no cooldown. Skipping the check also avoids a false "too soon" when
+    // the database clock and this process disagree by a few milliseconds.
+    if (latest && s.cooldownSeconds > 0) {
       const waitMs = latest.createdAt.getTime() + s.cooldownSeconds * 1000 - now.getTime();
       if (waitMs > 0) {
         throw tooMany(

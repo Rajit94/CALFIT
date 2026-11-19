@@ -162,6 +162,21 @@ describe('OtpService.requestOtp', () => {
     expect(sender.send).toHaveBeenCalledTimes(1);
   });
 
+  it('applies no cooldown when it is 0, even if a stored timestamp is ahead of this process clock', async () => {
+    const { service, rows } = setup({ OTP_RESEND_COOLDOWN_SECONDS: 0 });
+    rows.push({
+      id: 'skewed',
+      phone: PHONE,
+      codeHash: 'x',
+      attempts: 0,
+      expiresAt: new Date(Date.now() + 300_000),
+      consumedAt: null,
+      ip: null,
+      createdAt: new Date(Date.now() + 5),
+    });
+    await expect(service.requestOtp(PHONE, undefined)).resolves.toBeDefined();
+  });
+
   it('allows a new request after the cooldown', async () => {
     const { service, rows } = setup();
     await service.requestOtp(PHONE, undefined);
