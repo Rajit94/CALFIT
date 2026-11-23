@@ -7,6 +7,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter.js';
 import { createValidationPipe } from './common/validation/validation-pipe.js';
 import { AuthModule } from './auth/auth.module.js';
 import { GymsModule } from './gyms/gyms.module.js';
+import { MembersModule } from './members/members.module.js';
 import { UsersModule } from './users/users.module.js';
 import { envSchema } from './config/env.schema.js';
 import { HealthModule } from './health/health.module.js';
@@ -20,6 +21,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
     AuthModule,
     UsersModule,
     GymsModule,
+    MembersModule,
   ],
   controllers: [AppController],
   providers: [

@@ -94,7 +94,12 @@ function makeEnv() {
     audits,
     seed,
     logout: new LogoutService(prisma as never),
-    refresh: new RefreshService(prisma as never, config as never, jwt),
+    refresh: new RefreshService(
+      prisma as never,
+      config as never,
+      jwt,
+      { linkByPhone: async () => ({ linked: [], conflicts: [] }) } as never,
+    ),
   };
 }
 

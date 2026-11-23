@@ -5,11 +5,13 @@ import type { Env } from '../config/env.schema.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { readNumber } from './auth-config.js';
 import type { ClientDetails } from './client-info.decorator.js';
+import { GymMemberLinkService } from './gym-member-link.service.js';
 import {
   generateRefreshToken,
   hashRefreshToken,
   isWellFormedRefreshToken,
 } from './token.crypto.js';
+import { maskPhone } from './validation.js';
 
 export interface RefreshResult {
   accessToken: string;
@@ -62,6 +64,7 @@ export class RefreshService {
     private readonly prisma: PrismaService,
     config: ConfigService<Env, true>,
     private readonly jwt: JwtService,
+    private readonly memberLinks: GymMemberLinkService,
   ) {
     this.accessTtlSeconds = readNumber(config, 'JWT_ACCESS_TTL_SECONDS');
     this.refreshTtlDays = readNumber(config, 'REFRESH_TTL_DAYS');
@@ -84,7 +87,7 @@ export class RefreshService {
         platform: true,
         revokedAt: true,
         expiresAt: true,
-        user: { select: { status: true } },
+        user: { select: { status: true, phone: true } },
       },
     });
     if (!session) throw invalidToken();
@@ -135,6 +138,10 @@ export class RefreshService {
     }
 
     // 8. Issue the new access token for the new session.
+    // Best effort: connect memberships created for this phone number since the last sign-in.
+    // Never throws, so it cannot block the refresh.
+    await this.linkInvitedMemberships(session.userId, session.user.phone, client.ip);
+
     const accessToken = await this.jwt.signAsync(
       { sub: session.userId, sid: created.id },
       { expiresIn: this.accessTtlSeconds },
@@ -147,6 +154,23 @@ export class RefreshService {
       expiresIn: this.accessTtlSeconds,
       refreshExpiresAt: refreshExpiresAt.toISOString(),
     };
+  }
+
+  // Best effort, never throws: connect memberships that were created for this phone number since the
+  // user last signed in (for example an owner added them while their session was still alive).
+  private async linkInvitedMemberships(
+    userId: string,
+    phone: string,
+    ip: string | undefined,
+  ): Promise<void> {
+    try {
+      await this.memberLinks.linkByPhone(userId, phone, ip);
+    } catch (error) {
+      this.logger.error(
+        `Could not link invited memberships for ${maskPhone(phone)}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
   }
 
   // Revoke ALL of the user's sessions and record the event. Revoking comes first and must succeed;

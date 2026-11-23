@@ -33,7 +33,7 @@ function makeEnv() {
       findUnique: async ({ where }: { where: { refreshTokenHash: string } }) => {
         const s = sessions.find((x) => x.refreshTokenHash === where.refreshTokenHash);
         if (!s) return null;
-        return { ...s, user: { status: users.get(s.userId)?.status ?? 'ACTIVE' } };
+        return { ...s, user: { status: users.get(s.userId)?.status ?? 'ACTIVE', phone: '+919876543210' } };
       },
       updateMany: async ({
         where,
@@ -78,7 +78,13 @@ function makeEnv() {
   const values: Record<string, unknown> = { JWT_ACCESS_TTL_SECONDS: 900, REFRESH_TTL_DAYS: 30 };
   const config = { get: (key: string) => values[key] };
   const jwt = new JwtService({ secret: SECRET, signOptions: { algorithm: 'HS256' } });
-  const service = new RefreshService(prisma as never, config as never, jwt);
+  const links = {
+    linkByPhone: vi.fn(async (_userId: string, _phone: string, _ip?: string) => ({
+      linked: [],
+      conflicts: [],
+    })),
+  };
+  const service = new RefreshService(prisma as never, config as never, jwt, links as never);
 
   function seed(opts: {
     id: string;
@@ -104,7 +110,7 @@ function makeEnv() {
     return row;
   }
 
-  return { db, service, jwt, users, sessions, audits, seed };
+  return { db, service, jwt, users, sessions, audits, seed, links };
 }
 
 async function reject(promise: Promise<unknown>): Promise<{ status: number; code?: string }> {
@@ -188,6 +194,44 @@ describe('RefreshService.refresh: rotation', () => {
 
     expect(fresh.refreshTokenHash).toBe(hashRefreshToken(result.refreshToken));
     expect(fresh.refreshTokenHash).not.toBe(result.refreshToken);
+  });
+});
+
+describe('RefreshService.refresh: invited memberships', () => {
+  it('links memberships created for the phone number since the last sign-in', async () => {
+    const env = makeEnv();
+    const token = generateRefreshToken();
+    env.seed({ id: 'old', token });
+
+    await env.service.refresh(token, client);
+
+    expect(env.links.linkByPhone).toHaveBeenCalledTimes(1);
+    expect(env.links.linkByPhone).toHaveBeenCalledWith(USER, '+919876543210', '5.6.7.8');
+  });
+
+  it('still issues new tokens when linking fails', async () => {
+    const env = makeEnv();
+    const token = generateRefreshToken();
+    env.seed({ id: 'old', token });
+    env.links.linkByPhone.mockRejectedValueOnce(new Error('db down'));
+
+    const result = await env.service.refresh(token, client);
+
+    expect(result.accessToken).toBeTruthy();
+    expect(result.refreshToken).not.toBe(token);
+    expect(env.sessions).toHaveLength(2);
+  });
+
+  it('does not link when the refresh is refused', async () => {
+    const env = makeEnv();
+    const token = generateRefreshToken();
+    env.seed({ id: 'old', token });
+    env.users.set(USER, { id: USER, status: 'SUSPENDED' });
+
+    await reject(env.service.refresh(token, client));
+    await reject(env.service.refresh(generateRefreshToken(), client));
+
+    expect(env.links.linkByPhone).not.toHaveBeenCalled();
   });
 });
 

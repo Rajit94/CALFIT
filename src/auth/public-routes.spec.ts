@@ -4,6 +4,7 @@ import { AppController } from '../app.controller.js';
 import { HealthController } from '../health/health.controller.js';
 import { AuthMeController } from './auth-me.controller.js';
 import { GymsController } from '../gyms/gyms.controller.js';
+import { MembersController } from '../members/members.controller.js';
 import { UsersController } from '../users/users.controller.js';
 import { SessionController } from './session.controller.js';
 import { AuthController } from './auth.controller.js';
@@ -40,6 +41,13 @@ describe('public routes', () => {
   it('keeps /auth/me protected', () => {
     expect(isPublic(AuthMeController)).toBe(false);
     expect(isPublic(AuthMeController.prototype.getMe)).toBe(false);
+  });
+
+  it('keeps every members route protected', () => {
+    expect(isPublic(MembersController)).toBe(false);
+    for (const name of ['list', 'summary', 'getMember', 'addMember', 'removeMember', 'setWhatsappConsent'] as const) {
+      expect(isPublic(MembersController.prototype[name])).toBe(false);
+    }
   });
 
   it('keeps every gym route protected', () => {
