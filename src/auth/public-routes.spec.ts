@@ -4,6 +4,9 @@ import { AppController } from '../app.controller.js';
 import { HealthController } from '../health/health.controller.js';
 import { AuthMeController } from './auth-me.controller.js';
 import { GymsController } from '../gyms/gyms.controller.js';
+import { FeesController } from '../fees/fees.controller.js';
+import { PlansController } from '../fees/plans.controller.js';
+import { InvitationController } from '../members/invitation.controller.js';
 import { MembersController } from '../members/members.controller.js';
 import { UsersController } from '../users/users.controller.js';
 import { SessionController } from './session.controller.js';
@@ -41,6 +44,19 @@ describe('public routes', () => {
   it('keeps /auth/me protected', () => {
     expect(isPublic(AuthMeController)).toBe(false);
     expect(isPublic(AuthMeController.prototype.getMe)).toBe(false);
+  });
+
+  it('keeps every fees, plans and invitation route protected', () => {
+    for (const controller of [PlansController, FeesController, InvitationController]) {
+      expect(isPublic(controller)).toBe(false);
+    }
+    for (const name of ['list', 'create', 'update'] as const) {
+      expect(isPublic(PlansController.prototype[name])).toBe(false);
+    }
+    for (const name of ['assignFee', 'listFees', 'getFee', 'recordPayment', 'reversePayment', 'waiveFee', 'myFees'] as const) {
+      expect(isPublic(FeesController.prototype[name])).toBe(false);
+    }
+    expect(isPublic(InvitationController.prototype.accept)).toBe(false);
   });
 
   it('keeps every members route protected', () => {
